@@ -1,4 +1,4 @@
-name: Build Dell NFS DKMS Driver (.deb)
+name: Build Dell NFS DKMS Driver (.deb) for Latest Kernels
 
 on:
   workflow_dispatch:
@@ -11,24 +11,51 @@ jobs:
     - name: 📥 Checkout Repository
       uses: actions/checkout@v4
 
-    - name: 🧰 Install Required Packages
+    - name: 🧰 Install Tools
       run: |
         sudo apt update
-        sudo apt install -y build-essential dkms debhelper unzip linux-headers-generic
+        sudo apt install -y build-essential dkms debhelper unzip jq
 
     - name: 📂 Unzip Dell Driver Source
       run: |
         unzip dell-nfs-client-driver-ext-BR_MAIN.zip -d dellnfs
-        find dellnfs -type f -name build.sh
+        find dellnfs -type f -name build-deb.sh
+        chmod +x dellnfs/dell-nfs-client-driver-ext-BR_MAIN/build-deb.sh
 
-    - name: 🏗️ Build DKMS .deb
-      working-directory: dellnfs/dell-nfs-client-driver-ext-BR_MAIN/
+    - name: 🧠 Get 5 Latest Kernel Versions
+      id: kernels
       run: |
-        chmod +x build.sh
-        ./build.sh dkms
+        # Pull latest kernel headers available in apt and extract version
+        kernels=$(apt-cache search linux-headers | grep generic | grep -oP '\d+\.\d+\.\d+-\d+-generic' | sort -V | uniq | tail -n 5)
+        echo "Found kernel versions:"
+        echo "$kernels"
+        echo "kernel_list=$(echo "$kernels" | jq -R -s -c 'split("\n")[:-1]')" >> $GITHUB_OUTPUT
 
-    - name: 💾 Move DEBs to /dell-debs
+    - name: 🏗️ Build DKMS .deb for Each Kernel
       run: |
         mkdir -p dell-debs
-        cp dellnfs/dell-nfs-client-driver-ext-BR_MAIN/dell-nfs-client-driver-ext-BR_MAIN/dist/*.deb dell-debs/
-        ls -lh dell-debs
+        cd dellnfs/dell-nfs-client-driver-ext-BR_MAIN
+
+        for KERNEL in ${{ fromJson(steps.kernels.outputs.kernel_list) }}; do
+          echo "➡️ Building for $KERNEL"
+          sudo apt-get install -y "linux-headers-$KERNEL" || continue
+
+          # Patch build-deb.sh to use this KERNEL
+          sed -i "s/^KERNEL_VERSION=.*/KERNEL_VERSION=$KERNEL/" build-deb.sh || true
+
+          ./build-deb.sh dkms
+
+          # Move resulting .deb into target dir
+          DEB=$(find ./dist -name '*.deb' | head -n1)
+          if [ -f "$DEB" ]; then
+            cp "$DEB" "../../../dell-debs/multipathnfs-kernel-${KERNEL}.deb"
+          else
+            echo "⚠️ No .deb created for $KERNEL"
+          fi
+        done
+
+    - name: 📦 Upload Built DEBs
+      uses: actions/upload-artifact@v4
+      with:
+        name: dell-nfs-dkms-debs
+        path: dell-debs/
