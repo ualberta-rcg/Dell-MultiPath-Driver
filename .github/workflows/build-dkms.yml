@@ -11,7 +11,7 @@ jobs:
     - name: 📥 Checkout Repository
       uses: actions/checkout@v4
 
-    - name: 🧰 Install Tools
+    - name: 🧰 Install Build Tools
       run: |
         sudo apt update
         sudo apt install -y build-essential dkms debhelper unzip jq
@@ -19,33 +19,36 @@ jobs:
     - name: 📂 Unzip Dell Driver Source
       run: |
         unzip dell-nfs-client-driver-ext-BR_MAIN.zip -d dellnfs
-        find dellnfs -type f -name build-deb.sh
         chmod +x dellnfs/dell-nfs-client-driver-ext-BR_MAIN/build-deb.sh
 
-    - name: 🧠 Get 5 Latest Kernel Versions
-      id: kernels
+    - name: 🧠 Get Last 5 Generic Kernel Versions (Latest First)
+      id: get-kernels
       run: |
-        # Pull latest kernel headers available in apt and extract version
-        kernels=$(apt-cache search linux-headers | grep generic | grep -oP '\d+\.\d+\.\d+-\d+-generic' | sort -V | uniq | tail -n 5)
-        echo "Found kernel versions:"
-        echo "$kernels"
-        echo "kernel_list=$(echo "$kernels" | jq -R -s -c 'split("\n")[:-1]')" >> $GITHUB_OUTPUT
+        kernels=$(apt-cache search linux-headers | \
+          grep -Eo 'linux-headers-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-generic' | \
+          grep -vE 'lowlatency|azure|gcp|aws' | \
+          sort -V | uniq | tail -n 5 | tac)
 
-    - name: 🏗️ Build DKMS .deb for Each Kernel
+        echo "KERNEL_LIST<<EOF" >> $GITHUB_ENV
+        echo "$kernels" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+
+    - name: 🏗️ Build .deb for Each Kernel
       run: |
         mkdir -p dell-debs
         cd dellnfs/dell-nfs-client-driver-ext-BR_MAIN
 
-        for KERNEL in ${{ fromJson(steps.kernels.outputs.kernel_list) }}; do
+        echo "$KERNEL_LIST" | while read -r line; do
+          KERNEL="${line#linux-headers-}"
           echo "➡️ Building for $KERNEL"
-          sudo apt-get install -y "linux-headers-$KERNEL" || continue
 
-          # Patch build-deb.sh to use this KERNEL
+          sudo apt-get install -y "linux-headers-${KERNEL}" || continue
+
+          # Optional: Override kernel version in build-deb.sh
           sed -i "s/^KERNEL_VERSION=.*/KERNEL_VERSION=$KERNEL/" build-deb.sh || true
 
-          ./build-deb.sh dkms
+          ./build-deb.sh dkms || continue
 
-          # Move resulting .deb into target dir
           DEB=$(find ./dist -name '*.deb' | head -n1)
           if [ -f "$DEB" ]; then
             cp "$DEB" "../../../dell-debs/multipathnfs-kernel-${KERNEL}.deb"
@@ -54,7 +57,7 @@ jobs:
           fi
         done
 
-    - name: 📦 Upload Built DEBs
+    - name: 📤 Upload All Built DEBs
       uses: actions/upload-artifact@v4
       with:
         name: dell-nfs-dkms-debs
