@@ -22,7 +22,7 @@ jobs:
         find dellnfs -type f -name build.sh
 
     - name: 🏗️ Build DKMS .deb
-      working-directory: dellnfs/dell-nfs-client-driver-ext-BR_MAIN/dell-nfs-client-driver-ext-BR_MAIN
+      working-directory: dellnfs/dell-nfs-client-driver-ext-BR_MAIN/
       run: |
         chmod +x build.sh
         ./build.sh dkms
