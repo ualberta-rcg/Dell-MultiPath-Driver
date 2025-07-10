@@ -1,0 +1,34 @@
+name: Build Dell NFS DKMS Driver (.deb)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-dkms:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: 📥 Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: 🧰 Install Required Packages
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential dkms debhelper unzip linux-headers-generic
+
+    - name: 📂 Unzip Dell Driver Source
+      run: |
+        unzip dell-nfs-client-driver-ext-BR_MAIN.zip -d dellnfs
+        ls -lh dellnfs
+
+    - name: 🏗️ Build DKMS .deb
+      working-directory: dellnfs
+      run: |
+        chmod +x build.sh
+        ./build.sh dkms
+
+    - name: 💾 Move DEBs to /dell-debs
+      run: |
+        mkdir -p dell-debs
+        cp dellnfs/dist/*.deb dell-debs/
+        ls -lh dell-debs
